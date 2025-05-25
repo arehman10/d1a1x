@@ -1,6 +1,7 @@
 import csv
 import os
 from isic_classifier import classify_file, classify_chatgpt, load_isic, openai
+from isic_classifier import classify_file
 
 
 def test_classify_file(tmp_path):

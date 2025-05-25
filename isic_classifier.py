@@ -15,6 +15,13 @@ except Exception:  # pragma: no cover
 
     class openai:  # type: ignore
         ChatCompletion = _DummyChatCompletion
+import csv
+import re
+import sys
+from typing import List, Tuple
+from difflib import SequenceMatcher
+from difflib import SequenceMatcher
+from typing import List, Tuple
 
 
 def load_isic(path: str = "isic.csv") -> List[Tuple[str, str]]:
@@ -31,6 +38,15 @@ def _tokenize(text: str) -> set:
 
 def classify(activity: str, isic_data: List[Tuple[str, str]]) -> Tuple[str, float]:
     """Return the ISIC code with the highest token overlap score."""
+
+    """Return the ISIC code with the highest combined similarity score."""
+def _fuzzy_ratio(a: str, b: str) -> float:
+    """Return a similarity ratio between two strings."""
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
+def classify(activity: str, isic_data: List[Tuple[str, str]]) -> Tuple[str, float]:
+    """Return the ISIC code with the highest similarity score."""
     tokens = _tokenize(activity)
     best_code = None
     best_score = 0.0
@@ -39,6 +55,15 @@ def classify(activity: str, isic_data: List[Tuple[str, str]]) -> Tuple[str, floa
         if not desc_tokens:
             continue
         score = len(tokens & desc_tokens) / len(desc_tokens)
+
+        token_score = len(tokens & desc_tokens) / len(desc_tokens)
+        fuzzy_score = SequenceMatcher(None, activity.lower(), desc.lower()).ratio()
+        score = (token_score + fuzzy_score) / 2
+
+        overlap = len(tokens & desc_tokens) / len(desc_tokens)
+        fuzzy = _fuzzy_ratio(activity, desc)
+        score = (overlap + fuzzy) / 2
+
         if score > best_score:
             best_score = score
             best_code = code
@@ -84,6 +109,9 @@ def classify_file(
     When ``use_gpt`` is ``True`` the classification is performed via the
     ChatGPT API. Otherwise, the local token-overlap classifier is used.
     """
+
+def classify_file(input_csv: str, output_csv: str, column: str = "d1a1x", isic_path: str = "isic.csv") -> None:
+    """Classify activities in a CSV file and write results to a new CSV."""
     isic_data = load_isic(isic_path)
     with open(input_csv, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
@@ -101,6 +129,13 @@ def classify_file(
     with open(output_csv, 'w', newline='', encoding='utf-8') as f:
         fieldnames = list(rows[0].keys())
         writer = csv.DictWriter(f, fieldnames=fieldnames)
+
+        code, ratio = classify(row[column], isic_data)
+        row['isic_code'] = code
+        row['match_score'] = f"{ratio:.2f}"
+
+    with open(output_csv, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
 
@@ -113,3 +148,7 @@ if __name__ == "__main__":
     parser.add_argument("--api-key", help="OpenAI API key (defaults to OPENAI_API_KEY env variable)")
     args = parser.parse_args()
     classify_file(args.input_csv, args.output_csv, use_gpt=args.gpt, api_key=args.api_key)
+    if len(sys.argv) == 3:
+        classify_file(sys.argv[1], sys.argv[2])
+    else:
+        print("Usage: python isic_classifier.py input.csv output.csv")
