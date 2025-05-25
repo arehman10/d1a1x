@@ -1,5 +1,6 @@
 import csv
 import os
+from isic_classifier import classify_file, classify_chatgpt, load_isic, openai
 from isic_classifier import classify_file
 
 
@@ -24,3 +25,18 @@ def test_classify_file(tmp_path):
     assert codes[2] == '5610'
     assert codes[3] == '5510'
     assert codes[4] == '9311'
+
+
+def test_classify_chatgpt(monkeypatch):
+    calls = {}
+
+    def fake_create(model, messages, temperature=0):
+        calls['model'] = model
+        calls['messages'] = messages
+        return {"choices": [{"message": {"content": "6201"}}]}
+
+    monkeypatch.setattr(openai.ChatCompletion, "create", fake_create)
+    isic_data = load_isic()
+    code = classify_chatgpt("Custom software development services", isic_data)
+    assert code == "6201"
+    assert calls.get('model') == "gpt-3.5-turbo"

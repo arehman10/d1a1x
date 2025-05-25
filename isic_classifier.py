@@ -1,3 +1,20 @@
+import argparse
+import csv
+import os
+import re
+import sys
+from typing import List, Tuple
+
+try:  # pragma: no cover - allow running without openai installed
+    import openai  # type: ignore
+except Exception:  # pragma: no cover
+    class _DummyChatCompletion:
+        @staticmethod
+        def create(*args, **kwargs):
+            raise RuntimeError("openai package is required to use the ChatGPT classifier")
+
+    class openai:  # type: ignore
+        ChatCompletion = _DummyChatCompletion
 import csv
 import re
 import sys
@@ -20,6 +37,8 @@ def _tokenize(text: str) -> set:
 
 
 def classify(activity: str, isic_data: List[Tuple[str, str]]) -> Tuple[str, float]:
+    """Return the ISIC code with the highest token overlap score."""
+
     """Return the ISIC code with the highest combined similarity score."""
 def _fuzzy_ratio(a: str, b: str) -> float:
     """Return a similarity ratio between two strings."""
@@ -35,6 +54,8 @@ def classify(activity: str, isic_data: List[Tuple[str, str]]) -> Tuple[str, floa
         desc_tokens = _tokenize(desc)
         if not desc_tokens:
             continue
+        score = len(tokens & desc_tokens) / len(desc_tokens)
+
         token_score = len(tokens & desc_tokens) / len(desc_tokens)
         fuzzy_score = SequenceMatcher(None, activity.lower(), desc.lower()).ratio()
         score = (token_score + fuzzy_score) / 2
@@ -49,6 +70,46 @@ def classify(activity: str, isic_data: List[Tuple[str, str]]) -> Tuple[str, floa
     return best_code, best_score
 
 
+def classify_chatgpt(activity: str, isic_data: List[Tuple[str, str]], *, api_key: str | None = None) -> str:
+    """Classify a single activity using the ChatGPT API.
+
+    The function provides the list of available ISIC codes and asks the model to
+    return only the 4-digit code that best matches the description.
+    """
+    openai.api_key = api_key or os.getenv("OPENAI_API_KEY")
+    options = "\n".join(f"{code}: {desc}" for code, desc in isic_data)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Select the most appropriate 4-digit ISIC code from the provided list "
+                "that matches the user's business activity description. Respond with "
+                "only the 4-digit code."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Available codes:\n{options}\n\nActivity: {activity}",
+        },
+    ]
+    response = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=messages, temperature=0)
+    return str(response["choices"][0]["message"]["content"]).strip()
+
+
+def classify_file(
+    input_csv: str,
+    output_csv: str,
+    column: str = "d1a1x",
+    isic_path: str = "isic.csv",
+    use_gpt: bool = False,
+    api_key: str | None = None,
+) -> None:
+    """Classify activities in a CSV file and write results to a new CSV.
+
+    When ``use_gpt`` is ``True`` the classification is performed via the
+    ChatGPT API. Otherwise, the local token-overlap classifier is used.
+    """
+
 def classify_file(input_csv: str, output_csv: str, column: str = "d1a1x", isic_path: str = "isic.csv") -> None:
     """Classify activities in a CSV file and write results to a new CSV."""
     isic_data = load_isic(isic_path)
@@ -57,6 +118,18 @@ def classify_file(input_csv: str, output_csv: str, column: str = "d1a1x", isic_p
         rows = list(reader)
 
     for row in rows:
+        if use_gpt:
+            code = classify_chatgpt(row[column], isic_data, api_key=api_key)
+            row['isic_code'] = code
+        else:
+            code, ratio = classify(row[column], isic_data)
+            row['isic_code'] = code
+            row['match_score'] = f"{ratio:.2f}"
+
+    with open(output_csv, 'w', newline='', encoding='utf-8') as f:
+        fieldnames = list(rows[0].keys())
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+
         code, ratio = classify(row[column], isic_data)
         row['isic_code'] = code
         row['match_score'] = f"{ratio:.2f}"
@@ -68,6 +141,13 @@ def classify_file(input_csv: str, output_csv: str, column: str = "d1a1x", isic_p
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Classify activities into ISIC codes")
+    parser.add_argument("input_csv")
+    parser.add_argument("output_csv")
+    parser.add_argument("--gpt", action="store_true", help="Use ChatGPT for classification")
+    parser.add_argument("--api-key", help="OpenAI API key (defaults to OPENAI_API_KEY env variable)")
+    args = parser.parse_args()
+    classify_file(args.input_csv, args.output_csv, use_gpt=args.gpt, api_key=args.api_key)
     if len(sys.argv) == 3:
         classify_file(sys.argv[1], sys.argv[2])
     else:
