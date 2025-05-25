@@ -1,6 +1,8 @@
 import csv
 import re
 import sys
+from typing import List, Tuple
+from difflib import SequenceMatcher
 from difflib import SequenceMatcher
 from typing import List, Tuple
 
@@ -17,6 +19,8 @@ def _tokenize(text: str) -> set:
     return set(re.findall(r"\b\w+\b", text.lower()))
 
 
+def classify(activity: str, isic_data: List[Tuple[str, str]]) -> Tuple[str, float]:
+    """Return the ISIC code with the highest combined similarity score."""
 def _fuzzy_ratio(a: str, b: str) -> float:
     """Return a similarity ratio between two strings."""
     return SequenceMatcher(None, a.lower(), b.lower()).ratio()
@@ -31,9 +35,14 @@ def classify(activity: str, isic_data: List[Tuple[str, str]]) -> Tuple[str, floa
         desc_tokens = _tokenize(desc)
         if not desc_tokens:
             continue
+        token_score = len(tokens & desc_tokens) / len(desc_tokens)
+        fuzzy_score = SequenceMatcher(None, activity.lower(), desc.lower()).ratio()
+        score = (token_score + fuzzy_score) / 2
+
         overlap = len(tokens & desc_tokens) / len(desc_tokens)
         fuzzy = _fuzzy_ratio(activity, desc)
         score = (overlap + fuzzy) / 2
+
         if score > best_score:
             best_score = score
             best_code = code
